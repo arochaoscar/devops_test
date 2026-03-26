@@ -92,7 +92,7 @@ A dedicated IAM user `csgtest-deployer` was created with limited permissions for
 # 1. Create IAM user tagged with name:csgtest
 aws iam create-user --user-name csgtest-deployer --tags Key=name,Value=csgtest
 
-# 2. Create IAM policy with limited permissions (ECS, ECR, RDS, VPC, ALB, Secrets Manager, IAM Roles, CloudWatch Logs, Terraform state S3/DynamoDB)
+# 2. Create IAM policy with limited permissions (ECS, ECR, RDS, VPC, ALB, Secrets Manager, IAM Roles, CloudWatch Logs, ACM, Route 53, Terraform state S3/DynamoDB)
 aws iam create-policy --policy-name csgtest-deployer-policy \
   --policy-document file://iam-policy.json \
   --tags Key=name,Value=csgtest
