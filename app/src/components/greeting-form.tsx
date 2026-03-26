@@ -1,3 +1,21 @@
+/**
+ * GreetingForm — Client Component
+ *
+ * Interactive form that lets visitors submit their name to say "Hello".
+ * Displays a table of all previous greetings with name, date, location, and IP.
+ *
+ * Features:
+ *   - Client-side validation (empty name, captcha not completed)
+ *   - Google reCAPTCHA v2 integration (optional — skipped if no site key)
+ *   - Optimistic UI — updates the greetings table immediately after submission
+ *   - Auto-dismissing success message (3 seconds)
+ *   - Deterministic avatar colors based on the first letter of each name
+ *
+ * Props:
+ *   recaptchaSiteKey — passed from the server component (page.tsx) to avoid
+ *                      using NEXT_PUBLIC_ env vars in the client bundle
+ */
+
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -17,6 +35,7 @@ export default function GreetingForm({ recaptchaSiteKey }: GreetingFormProps) {
   const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const recaptchaRef = useRef<ReCAPTCHA>(null);
 
+  // Fetch greetings on mount via Server Action
   const fetchGreetings = useCallback(async () => {
     try {
       const data = await getGreetings();
@@ -30,11 +49,13 @@ export default function GreetingForm({ recaptchaSiteKey }: GreetingFormProps) {
     fetchGreetings();
   }, [fetchGreetings]);
 
+  /** Handle form submission — validates, calls server action, updates UI */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess(false);
 
+    // Client-side validation
     if (!name.trim()) {
       setError("Please enter your name");
       return;
@@ -55,6 +76,7 @@ export default function GreetingForm({ recaptchaSiteKey }: GreetingFormProps) {
         return;
       }
 
+      // Update table with the fresh list returned by the server
       setGreetings(result.greetings);
       setName("");
       setSuccess(true);
@@ -68,6 +90,7 @@ export default function GreetingForm({ recaptchaSiteKey }: GreetingFormProps) {
     }
   };
 
+  /** Format a date for the greetings table (e.g., "Jan 15, 2026, 10:30:00 AM") */
   const formatDate = (dateStr: string | Date) => {
     return new Date(dateStr).toLocaleString("en-US", {
       year: "numeric",
@@ -79,6 +102,7 @@ export default function GreetingForm({ recaptchaSiteKey }: GreetingFormProps) {
     });
   };
 
+  /** Deterministic avatar colors based on the first character of the name */
   const getAvatarColors = (name: string) => {
     const palette = [
       { bg: "#EBF2FB", fg: "#2F5EA0" },

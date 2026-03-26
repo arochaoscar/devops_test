@@ -1,3 +1,16 @@
+# =============================================================================
+# Development Dockerfile
+# =============================================================================
+# Single-stage image for local development with docker-compose.
+# Runs the Next.js dev server with hot-reload — source files are mounted
+# as volumes so changes are reflected immediately without rebuilding.
+#
+# On startup:
+#   1. Generates the Prisma client (in case schema changed)
+#   2. Runs pending database migrations
+#   3. Starts the Next.js dev server on port 3000
+# =============================================================================
+
 FROM node:20-alpine
 RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app

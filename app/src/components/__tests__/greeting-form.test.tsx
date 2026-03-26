@@ -1,3 +1,24 @@
+/**
+ * Tests for the GreetingForm client component.
+ *
+ * Uses React Testing Library + userEvent for realistic user interactions.
+ * Server Actions are mocked — these tests verify UI behavior only.
+ *
+ * Test categories:
+ *   - Rendering (input, button, labels)
+ *   - Initial data fetch and display
+ *   - Empty name validation
+ *   - Successful form submission and UI updates
+ *   - Server error display
+ *   - Network error handling
+ *   - Input clearing after submission
+ *   - Error clearing on typing
+ *   - Entry count badge
+ *   - Null location display (dash)
+ *   - Avatar initial rendering
+ *   - Captcha gating (button disabled without token)
+ */
+
 import React from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

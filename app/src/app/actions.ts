@@ -1,3 +1,15 @@
+/**
+ * Server Actions
+ *
+ * Next.js Server Actions that handle greeting CRUD operations.
+ * These run server-side only — they are never sent to the browser.
+ *
+ * getGreetings()  — Fetches all greetings ordered by newest first.
+ * createGreeting() — Validates input, verifies reCAPTCHA, resolves
+ *                    the visitor's IP geolocation, creates the record,
+ *                    and returns the updated list.
+ */
+
 "use server";
 
 import { headers } from "next/headers";
@@ -16,6 +28,7 @@ interface ActionResult {
   greetings: Greeting[];
 }
 
+/** Fetch all greetings from the database, newest first */
 export async function getGreetings(): Promise<Greeting[]> {
   return prisma.greeting.findMany({
     select: { name: true, createdAt: true, ipAddress: true, location: true },
@@ -23,10 +36,22 @@ export async function getGreetings(): Promise<Greeting[]> {
   });
 }
 
+/**
+ * Create a new greeting record.
+ *
+ * Flow:
+ *   1. Validate name (required, max 255 chars)
+ *   2. Verify reCAPTCHA token with Google
+ *   3. Extract visitor IP from x-forwarded-for (set by ALB)
+ *   4. Resolve IP to city/region/country via ip-api.com (best-effort)
+ *   5. Insert record into PostgreSQL via Prisma
+ *   6. Return updated greetings list
+ */
 export async function createGreeting(
   name: string,
   recaptchaToken: string | null
 ): Promise<ActionResult> {
+  // --- Input validation ---
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     return { error: "Name is required", greetings: [] };
   }
@@ -35,15 +60,20 @@ export async function createGreeting(
     return { error: "Name is too long", greetings: [] };
   }
 
+  // --- reCAPTCHA verification ---
   const isHuman = await verifyRecaptcha(recaptchaToken || "");
   if (!isHuman) {
     return { error: "reCAPTCHA verification failed", greetings: [] };
   }
 
+  // --- IP extraction ---
+  // ALB sets x-forwarded-for with the client IP as the first entry
   const hdrs = await headers();
   const forwarded = hdrs.get("x-forwarded-for");
   const ip = forwarded ? forwarded.split(",")[0].trim() : "0.0.0.0";
 
+  // --- Geolocation ---
+  // Strip IPv6 prefix and detect local/private IPs to skip geo lookup
   const cleanIp = ip.replace(/^::ffff:/, "");
   const isLocalIp =
     cleanIp === "0.0.0.0" ||
@@ -59,6 +89,7 @@ export async function createGreeting(
   if (isLocalIp) {
     location = "Local Network";
   } else {
+    // Best-effort geolocation — failure is silently ignored
     try {
       const geoRes = await fetch(
         `http://ip-api.com/json/${cleanIp}?fields=city,regionName,country`
@@ -72,10 +103,11 @@ export async function createGreeting(
         }
       }
     } catch {
-      // Geolocation is best-effort
+      // Geolocation is best-effort — don't block the greeting
     }
   }
 
+  // --- Persist and return ---
   await prisma.greeting.create({
     data: {
       name: name.trim(),

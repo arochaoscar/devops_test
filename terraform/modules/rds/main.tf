@@ -1,3 +1,22 @@
+# =============================================================================
+# RDS Module
+# =============================================================================
+# Creates a PostgreSQL database instance in private subnets.
+#
+# Security:
+#   - Storage encryption enabled (AES-256)
+#   - Not publicly accessible — only reachable from ECS tasks via SG rules
+#   - Credentials stored in Secrets Manager (see secrets module)
+#
+# Environment differences:
+#   - test: single-AZ, skip final snapshot (faster teardown)
+#   - prod: multi-AZ for high availability, final snapshot on deletion
+#
+# Storage autoscaling is enabled: starts at allocated_storage (20 GB)
+# and grows up to max_allocated_storage (50 GB) as needed.
+# =============================================================================
+
+# Subnet group places the RDS instance in private subnets across AZs
 resource "aws_db_subnet_group" "this" {
   name       = "${var.project}-${var.environment}"
   subnet_ids = var.private_subnet_ids
