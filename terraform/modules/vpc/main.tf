@@ -98,8 +98,14 @@ resource "aws_route_table_association" "private" {
 
 resource "aws_security_group" "alb" {
   name_prefix = "${var.project}-alb-"
-  description = "Allow HTTP and HTTPS inbound to ALB"
+  description = "Allow HTTP inbound to ALB"
   vpc_id      = aws_vpc.this.id
+
+  revoke_rules_on_delete = true
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   ingress {
     description = "HTTP from anywhere (redirects to HTTPS)"
@@ -132,6 +138,12 @@ resource "aws_security_group" "ecs" {
   description = "Allow traffic from ALB to ECS tasks"
   vpc_id      = aws_vpc.this.id
 
+  revoke_rules_on_delete = true
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
   ingress {
     description     = "From ALB"
     from_port       = var.app_port
@@ -154,6 +166,12 @@ resource "aws_security_group" "rds" {
   name_prefix = "${var.project}-rds-"
   description = "Allow PostgreSQL from ECS tasks"
   vpc_id      = aws_vpc.this.id
+
+  revoke_rules_on_delete = true
+
+  lifecycle {
+    create_before_destroy = true
+  }
 
   ingress {
     description     = "PostgreSQL from ECS"
