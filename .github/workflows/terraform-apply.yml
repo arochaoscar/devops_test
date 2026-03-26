@@ -65,6 +65,8 @@ jobs:
         env:
           TF_VAR_db_password: ${{ inputs.environment == 'prod' && secrets.DB_PASSWORD_PROD || secrets.DB_PASSWORD_TEST }}
           TF_VAR_route53_zone_id: ${{ secrets.ROUTE53_ZONE_ID }}
+          TF_VAR_recaptcha_site_key: ${{ secrets.RECAPTCHA_SITE_KEY }}
+          TF_VAR_recaptcha_secret_key: ${{ secrets.RECAPTCHA_SECRET_KEY }}
         run: terraform plan -out=tfplan -no-color
 
       # Upload binary plan so the apply job uses the exact same changes
