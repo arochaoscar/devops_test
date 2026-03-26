@@ -8,7 +8,10 @@
       "@prisma/engines",
       "prisma",
       "sharp"
-    ]
+    ],
+    "overrides": {
+      "effect": ">=3.20.0"
+    }
   },
   "scripts": {
     "dev": "next dev",
