@@ -9,6 +9,10 @@
 
 import GreetingForm from "@/components/greeting-form";
 
+// Force dynamic rendering so process.env is read at request time,
+// not at build time (when RECAPTCHA_SITE_KEY is not available)
+export const dynamic = "force-dynamic";
+
 export default function Home() {
   // Read server-side env var — never exposed in client bundle
   const recaptchaSiteKey = process.env.RECAPTCHA_SITE_KEY || "";
