@@ -17,7 +17,6 @@ RUN pnpm build
 
 # Stage 3: Production runner (hardened)
 FROM node:20-alpine AS runner
-RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app
 
 # Security: remove unnecessary packages and upgrade existing ones
@@ -37,12 +36,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# Copy Prisma files for runtime migrations and client
-# Prisma v6+ generates the client inside @prisma/client (no .prisma directory)
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.pnpm ./node_modules/.pnpm
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
+# Copy Prisma schema for migrations and full node_modules for prisma CLI + client
+# Prisma v6 with pnpm requires .pnpm, @prisma/client, @prisma/engines, and prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 # Security: read-only filesystem support — writable tmp for Next.js cache
 RUN mkdir -p /app/.next/cache && chown -R nextjs:nodejs /app/.next/cache
@@ -56,4 +53,6 @@ ENV HOSTNAME="0.0.0.0"
 
 # Security: dumb-init handles PID 1 and signal forwarding properly
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["sh", "-c", "pnpm prisma migrate deploy && node server.js"]
+# Run Prisma migrations then start the server
+# Invoke prisma directly via node (no pnpm/npx in prod image)
+CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]
