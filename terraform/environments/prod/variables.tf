@@ -63,3 +63,16 @@ variable "ecs_desired_count" {
   type        = number
   default     = 2
 }
+
+variable "recaptcha_site_key" {
+  description = "Google reCAPTCHA site key (public)"
+  type        = string
+  default     = ""
+}
+
+variable "recaptcha_secret_key" {
+  description = "Google reCAPTCHA secret key"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

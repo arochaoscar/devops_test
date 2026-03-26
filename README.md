@@ -4,15 +4,16 @@ AWS containerized infrastructure using Terraform, ECS, RDS, and CI/CD pipelines.
 
 ## Architecture
 
-A reusable Terraform setup that deploys a containerized "Hello, World!" web application on AWS ECS Fargate, backed by an RDS instance and secured with proper IAM roles, security groups, and secrets management.
+A reusable Terraform setup that deploys a containerized Next.js web application on AWS ECS Fargate, backed by an RDS PostgreSQL instance and secured with proper IAM roles, security groups, and secrets management.
 
 ### Components
 
+- **Next.js Application** - "Hello, World!" app with greeting form, Google reCAPTCHA, and visitor log
 - **ECS Fargate Cluster** - Runs the containerized application
 - **Application Load Balancer** - Routes traffic to ECS tasks
-- **RDS (PostgreSQL)** - Database instance
+- **RDS (PostgreSQL)** - Stores greeting records (name, timestamp, IP)
 - **ECR** - Docker image registry
-- **AWS Secrets Manager** - Secure storage for secrets
+- **AWS Secrets Manager** - Database credentials
 - **VPC** - Networking with public/private subnets, security groups, and ACLs
 
 All resources are tagged with `name:csgtest`.
@@ -21,9 +22,21 @@ All resources are tagged with `name:csgtest`.
 
 ```
 .
-├── app/                           # Application code
-│   ├── Dockerfile
-│   └── ...
+├── app/                           # Next.js application
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── page.tsx           # Main page — "Hello, World!" + greeting form
+│   │   │   ├── layout.tsx         # Root layout
+│   │   │   └── api/greetings/
+│   │   │       └── route.ts       # GET/POST API — list & save greetings
+│   │   ├── components/
+│   │   │   └── greeting-form.tsx  # Client component — form, reCAPTCHA, table
+│   │   └── lib/
+│   │       ├── db.ts              # PostgreSQL pool (parses Secrets Manager JSON)
+│   │       └── recaptcha.ts       # Server-side reCAPTCHA verification
+│   ├── Dockerfile                 # Multi-stage hardened build (non-root, dumb-init)
+│   └── .dockerignore
+├── docker-compose.yml             # Local dev: app + PostgreSQL
 ├── terraform/
 │   ├── modules/                   # Reusable Terraform modules
 │   │   ├── vpc/                   # VPC, subnets, IGW, NAT, route tables, security groups
@@ -103,6 +116,10 @@ gh secret set AWS_REGION --repo arochaoscar/devops_test --body "us-east-1"
 # Set Terraform state backend secrets
 gh secret set TF_STATE_BUCKET --repo arochaoscar/devops_test --body "csgtest-terraform-state"
 gh secret set TF_STATE_LOCK_TABLE --repo arochaoscar/devops_test --body "csgtest-terraform-lock"
+
+# Set reCAPTCHA keys
+gh secret set RECAPTCHA_SITE_KEY --repo arochaoscar/devops_test --body "<SITE_KEY>"
+gh secret set RECAPTCHA_SECRET_KEY --repo arochaoscar/devops_test --body "<SECRET_KEY>"
 
 # Verify secrets
 gh secret list --repo arochaoscar/devops_test
@@ -240,6 +257,56 @@ terraform destroy -var="db_password=YOUR_DB_PASSWORD"
 
 > **Note:** `db_password` is the only required variable without a default. In CI/CD, it is passed via GitHub Secrets.
 
+### 5. Application
+
+A Next.js app with a greeting form, Google reCAPTCHA v2, and a visitor log stored in PostgreSQL.
+
+#### Features
+
+- **"Hello, World!"** landing page
+- **Input** — "Leave your name to say Hello"
+- **Google reCAPTCHA v2** — prevents bot submissions
+- **Greetings table** — "All these people have said Hello" with name, date/time, and IP
+- **API** — `GET /api/greetings` (list) and `POST /api/greetings` (create)
+
+#### How Secrets Flow
+
+```
+GitHub Secrets ──► Terraform (TF_VAR_*) ──► ECS Environment Variables ──► App Runtime
+```
+
+- `RECAPTCHA_SITE_KEY` — read server-side, passed to client as prop (no `NEXT_PUBLIC_` — nothing baked in the image)
+- `RECAPTCHA_SECRET_KEY` — server-side only, used to verify captcha with Google
+- `DATABASE_URL` — injected from AWS Secrets Manager as JSON, parsed at runtime
+
+#### Docker Hardening
+
+The production image includes:
+
+- **Non-root user** (`nextjs:nodejs`, UID 1001)
+- **dumb-init** as PID 1 for proper signal handling
+- **Alpine packages upgraded** at build time
+- **Standalone output** — minimal image, no `node_modules`
+- **Read-only filesystem** support (only `.next/cache` writable)
+
+#### Local Development
+
+```bash
+# Start app + PostgreSQL
+docker compose up --build
+
+# Access at http://localhost:3000
+```
+
+The `docker-compose.yml` provides:
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| `app` | Built from `./app` | 3000 | Next.js application |
+| `db` | `postgres:15-alpine` | 5432 | PostgreSQL database |
+
+Environment variables (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `DATABASE_URL`) are passed as runtime env vars — the Docker image contains no secrets.
+
 ## Environments
 
 | Environment | Branch    | Description            |
@@ -320,7 +387,8 @@ Triggered manually from **Actions → Terraform Destroy → Run workflow** in th
 .github/workflows/
 ├── terraform-plan.yml      # Auto: plan on push/PR
 ├── terraform-apply.yml     # Manual: apply via workflow_dispatch
-└── terraform-destroy.yml   # Manual: destroy via workflow_dispatch
+├── terraform-destroy.yml   # Manual: destroy via workflow_dispatch
+└── app-deploy.yml          # Manual: build Docker image, push to ECR, deploy to ECS
 ```
 
 ### Required GitHub Secrets
@@ -334,6 +402,8 @@ Triggered manually from **Actions → Terraform Destroy → Run workflow** in th
 | `TF_STATE_LOCK_TABLE`   | DynamoDB table for state locking  |
 | `DB_PASSWORD_TEST`      | RDS password for test environment |
 | `DB_PASSWORD_PROD`      | RDS password for prod environment |
+| `RECAPTCHA_SITE_KEY`    | Google reCAPTCHA v2 site key (public) |
+| `RECAPTCHA_SECRET_KEY`  | Google reCAPTCHA v2 secret key |
 
 ## Branching Strategy
 

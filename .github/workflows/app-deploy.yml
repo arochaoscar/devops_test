@@ -1,0 +1,78 @@
+name: Deploy Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - test
+          - prod
+
+permissions:
+  contents: read
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  build-and-push:
+    name: Build & Push (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      ecr_repo: ${{ steps.meta.outputs.ecr_repo }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REPO="${ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/csgtest-${{ inputs.environment }}"
+          IMAGE_TAG="${{ github.sha }}"
+          echo "ecr_repo=${ECR_REPO}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to Amazon ECR
+        run: |
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | \
+            docker login --username AWS --password-stdin $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+
+      - name: Build Docker image
+        working-directory: app
+        run: |
+          docker build -t ${{ steps.meta.outputs.ecr_repo }}:${{ steps.meta.outputs.image_tag }} .
+          docker tag ${{ steps.meta.outputs.ecr_repo }}:${{ steps.meta.outputs.image_tag }} ${{ steps.meta.outputs.ecr_repo }}:latest
+
+      - name: Push Docker image
+        run: |
+          docker push ${{ steps.meta.outputs.ecr_repo }}:${{ steps.meta.outputs.image_tag }}
+          docker push ${{ steps.meta.outputs.ecr_repo }}:latest
+
+  deploy:
+    name: Deploy to ECS (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Force new ECS deployment
+        run: |
+          aws ecs update-service \
+            --cluster csgtest-${{ inputs.environment }} \
+            --service csgtest-${{ inputs.environment }} \
+            --force-new-deployment \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Wait for deployment to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster csgtest-${{ inputs.environment }} \
+            --services csgtest-${{ inputs.environment }} \
+            --region ${{ secrets.AWS_REGION }}
+          echo "Deployment complete!"

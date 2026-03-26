@@ -139,7 +139,9 @@ module "ecs" {
 
   environment_variables = [
     { name = "NODE_ENV", value = "test" },
-    { name = "PORT", value = tostring(var.app_port) }
+    { name = "PORT", value = tostring(var.app_port) },
+    { name = "RECAPTCHA_SITE_KEY", value = var.recaptcha_site_key },
+    { name = "RECAPTCHA_SECRET_KEY", value = var.recaptcha_secret_key }
   ]
 
   secret_variables = [
