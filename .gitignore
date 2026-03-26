@@ -18,8 +18,25 @@ iam-policy.json
 # Environment
 .env
 
+# Node
+node_modules/
+package-lock.json
+
+# Next.js
+app/.next/
+app/.env*
+
+# Playwright MCP
+.playwright-mcp/
+
 # Claude Code / AI tooling
+AGENTS.md
 .claude/
 .agents/
 skills-lock.json
 CLAUDE.md
+
+# Misc
+*.pdf
+new-palette-screenshot.png
+COLORS.md

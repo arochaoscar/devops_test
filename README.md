@@ -4,15 +4,16 @@ AWS containerized infrastructure using Terraform, ECS, RDS, and CI/CD pipelines.
 
 ## Architecture
 
-A reusable Terraform setup that deploys a containerized "Hello, World!" web application on AWS ECS Fargate, backed by an RDS instance and secured with proper IAM roles, security groups, and secrets management.
+A reusable Terraform setup that deploys a containerized Next.js web application on AWS ECS Fargate, backed by an RDS PostgreSQL instance and secured with proper IAM roles, security groups, and secrets management.
 
 ### Components
 
+- **Next.js Application** - "Hello, World!" app with greeting form, Google reCAPTCHA, and visitor log
 - **ECS Fargate Cluster** - Runs the containerized application
 - **Application Load Balancer** - Routes traffic to ECS tasks
-- **RDS (PostgreSQL)** - Database instance
+- **RDS (PostgreSQL)** - Stores greeting records (name, timestamp, IP)
 - **ECR** - Docker image registry
-- **AWS Secrets Manager** - Secure storage for secrets
+- **AWS Secrets Manager** - Database credentials
 - **VPC** - Networking with public/private subnets, security groups, and ACLs
 
 All resources are tagged with `name:csgtest`.
@@ -21,9 +22,29 @@ All resources are tagged with `name:csgtest`.
 
 ```
 .
-├── app/                           # Application code
-│   ├── Dockerfile
-│   └── ...
+├── app/                           # Next.js application
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── page.tsx           # Main page — "Hello, World!" + greeting form
+│   │   │   ├── layout.tsx         # Root layout
+│   │   │   ├── actions.ts         # Server Actions — getGreetings / createGreeting
+│   │   │   └── __tests__/         # Unit tests for server actions
+│   │   ├── components/
+│   │   │   ├── greeting-form.tsx  # Client component — form, reCAPTCHA, table
+│   │   │   └── __tests__/         # Unit tests for components
+│   │   └── lib/
+│   │       ├── db.ts              # Prisma client singleton
+│   │       ├── recaptcha.ts       # Server-side reCAPTCHA verification
+│   │       └── __tests__/         # Unit tests for lib utilities
+│   ├── prisma/                    # Prisma schema and migrations
+│   ├── jest.config.js             # Jest config (server + client projects)
+│   ├── eslint.config.mjs          # ESLint (Next.js + Jest + Testing Library)
+│   ├── Dockerfile                 # Multi-stage hardened build (non-root, dumb-init)
+│   └── Dockerfile.dev             # Development — hot-reload with volumes
+├── docker-compose.yml             # Local dev: app + PostgreSQL
+├── setup.sh                       # One-command local setup (deps, lint, tests, containers)
+├── .husky/
+│   └── pre-push                   # Git hook: lint + tests before every push
 ├── terraform/
 │   ├── modules/                   # Reusable Terraform modules
 │   │   ├── vpc/                   # VPC, subnets, IGW, NAT, route tables, security groups
@@ -44,10 +65,20 @@ All resources are tagged with `name:csgtest`.
 
 ## Prerequisites
 
+- [Node.js 20+](https://nodejs.org/) and [pnpm](https://pnpm.io/)
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with valid credentials
 - [Terraform >= 1.0](https://developer.hashicorp.com/terraform/install)
 - [Docker](https://docs.docker.com/get-started/get-docker/)
 - [GitHub CLI (`gh`)](https://cli.github.com/)
+
+### Quick Start
+
+```bash
+# One-command setup: installs deps, runs lint + tests, starts containers
+./setup.sh
+
+# App available at http://localhost:3000
+```
 
 ### 0. AWS Service Account Setup
 
@@ -103,6 +134,10 @@ gh secret set AWS_REGION --repo arochaoscar/devops_test --body "us-east-1"
 # Set Terraform state backend secrets
 gh secret set TF_STATE_BUCKET --repo arochaoscar/devops_test --body "csgtest-terraform-state"
 gh secret set TF_STATE_LOCK_TABLE --repo arochaoscar/devops_test --body "csgtest-terraform-lock"
+
+# Set reCAPTCHA keys
+gh secret set RECAPTCHA_SITE_KEY --repo arochaoscar/devops_test --body "<SITE_KEY>"
+gh secret set RECAPTCHA_SECRET_KEY --repo arochaoscar/devops_test --body "<SECRET_KEY>"
 
 # Verify secrets
 gh secret list --repo arochaoscar/devops_test
@@ -240,6 +275,85 @@ terraform destroy -var="db_password=YOUR_DB_PASSWORD"
 
 > **Note:** `db_password` is the only required variable without a default. In CI/CD, it is passed via GitHub Secrets.
 
+### 5. Application
+
+A Next.js app with a greeting form, Google reCAPTCHA v2, and a visitor log stored in PostgreSQL.
+
+#### Features
+
+- **"Hello, World!"** landing page
+- **Input** — "Leave your name to say Hello"
+- **Google reCAPTCHA v2** — prevents bot submissions
+- **Greetings table** — "All these people have said Hello" with name, date/time, location, and IP
+- **Server Actions** — `getGreetings()` (list) and `createGreeting()` (create with validation, IP geolocation)
+
+#### How Secrets Flow
+
+```
+GitHub Secrets ──► Terraform (TF_VAR_*) ──► ECS Environment Variables ──► App Runtime
+```
+
+- `RECAPTCHA_SITE_KEY` — read server-side, passed to client as prop (no `NEXT_PUBLIC_` — nothing baked in the image)
+- `RECAPTCHA_SECRET_KEY` — server-side only, used to verify captcha with Google
+- `DATABASE_URL` — injected from AWS Secrets Manager as JSON, parsed at runtime
+
+#### Docker Hardening
+
+The production image includes:
+
+- **Non-root user** (`nextjs:nodejs`, UID 1001)
+- **dumb-init** as PID 1 for proper signal handling
+- **Alpine packages upgraded** at build time
+- **Standalone output** — minimal image, no `node_modules`
+- **Read-only filesystem** support (only `.next/cache` writable)
+
+#### Testing
+
+Unit tests use Jest with ts-jest, split into two projects (server in Node, client in jsdom):
+
+```bash
+cd app
+
+# Run all tests (37 tests across 3 suites)
+pnpm test
+
+# Watch mode
+pnpm test:watch
+
+# Run lint (ESLint with Jest + Testing Library plugins)
+pnpm lint
+```
+
+| Suite | Scope |
+|-------|-------|
+| `recaptcha.test.ts` | Bypass logic, success/failure responses |
+| `actions.test.ts` | Input validation, reCAPTCHA, IP extraction, local IP detection, geolocation |
+| `greeting-form.test.tsx` | Render, form submission, error handling, captcha gating, avatar rendering |
+
+#### Git Hooks (Husky)
+
+A `pre-push` hook runs `pnpm lint && pnpm test` before every push. If either fails, the push is blocked.
+
+#### Local Development
+
+```bash
+# One-command setup (recommended)
+./setup.sh
+
+# Or manually:
+docker compose up --build
+# Access at http://localhost:3000
+```
+
+The `docker-compose.yml` provides:
+
+| Service | Image | Port | Purpose |
+|---------|-------|------|---------|
+| `app` | Built from `./app` (Dockerfile.dev) | 3000 | Next.js dev server with hot-reload |
+| `db` | `postgres:15-alpine` | 5432 | PostgreSQL database |
+
+Prisma migrations run automatically on container startup. Environment variables (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `DATABASE_URL`) are passed as runtime env vars — the Docker image contains no secrets.
+
 ## Environments
 
 | Environment | Branch    | Description            |
@@ -260,7 +374,19 @@ terraform apply -var="db_password=YOUR_DB_PASSWORD"
 
 ### CI/CD (GitHub Actions)
 
-Two workflows handle infrastructure deployment with a **plan-auto / apply-manual** strategy:
+#### `app-ci.yml` — Automatic
+
+Triggers on push/PR to `develop` or `main` when `app/` files change. Runs three jobs:
+
+| Job | Runs | Description |
+|-----|------|-------------|
+| **lint-and-test** | Always | ESLint + Jest (37 unit tests) |
+| **audit** | Always | `pnpm audit --prod` — checks for known vulnerabilities |
+| **build-and-push** | Push only (not PRs) | Docker build with layer caching, push to ECR |
+
+Branch mapping: `develop` → `csgtest-test`, `main` → `csgtest-prod`. Images are tagged with full SHA, short SHA, and `latest`. Docker layer caching via GitHub Actions cache (BuildKit) reduces build time by ~50-70% on subsequent runs.
+
+Two additional workflows handle infrastructure deployment with a **plan-auto / apply-manual** strategy:
 
 #### `terraform-plan.yml` — Automatic
 
@@ -318,6 +444,8 @@ Triggered manually from **Actions → Terraform Destroy → Run workflow** in th
 
 ```
 .github/workflows/
+├── app-ci.yml              # Auto: lint, test, audit, Docker build & push to ECR
+├── app-deploy.yml          # Manual: build Docker image, push to ECR, deploy to ECS
 ├── terraform-plan.yml      # Auto: plan on push/PR
 ├── terraform-apply.yml     # Manual: apply via workflow_dispatch
 └── terraform-destroy.yml   # Manual: destroy via workflow_dispatch
@@ -334,6 +462,8 @@ Triggered manually from **Actions → Terraform Destroy → Run workflow** in th
 | `TF_STATE_LOCK_TABLE`   | DynamoDB table for state locking  |
 | `DB_PASSWORD_TEST`      | RDS password for test environment |
 | `DB_PASSWORD_PROD`      | RDS password for prod environment |
+| `RECAPTCHA_SITE_KEY`    | Google reCAPTCHA v2 site key (public) |
+| `RECAPTCHA_SECRET_KEY`  | Google reCAPTCHA v2 secret key |
 
 ## Branching Strategy
 

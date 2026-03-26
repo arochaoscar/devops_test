@@ -63,3 +63,28 @@ variable "ecs_desired_count" {
   type        = number
   default     = 2
 }
+
+variable "domain_name" {
+  description = "Root domain name"
+  type        = string
+  default     = "arochaoscar.online"
+}
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for HTTPS"
+  type        = string
+  default     = "arn:aws:acm:us-east-1:230289224568:certificate/b60495b0-3a32-4a48-a258-87dbd4918a88"
+}
+
+variable "recaptcha_site_key" {
+  description = "Google reCAPTCHA site key (public)"
+  type        = string
+  default     = ""
+}
+
+variable "recaptcha_secret_key" {
+  description = "Google reCAPTCHA secret key"
+  type        = string
+  sensitive   = true
+  default     = ""
+}

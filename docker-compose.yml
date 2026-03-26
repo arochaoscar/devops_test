@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+      - RECAPTCHA_SITE_KEY=${PUBLIC_CATCHA_KEY}
+      - RECAPTCHA_SECRET_KEY=${PRIVATE_CAPTCHA_KEY}
+    volumes:
+      - ./app/src/app:/app/src/app
+      - ./app/src/components:/app/src/components
+      - ./app/src/lib:/app/src/lib
+      - ./app/public:/app/public
+      - ./app/prisma:/app/prisma
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:

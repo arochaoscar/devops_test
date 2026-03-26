@@ -1,0 +1,159 @@
+# =============================================================================
+# Deploy Application to ECS
+# =============================================================================
+# Manual workflow (workflow_dispatch) that deploys the latest ECR image to ECS.
+#
+# Steps:
+#   1. Fetches the latest image tag from the ECR repository
+#   2. Downloads the current ECS task definition
+#   3. Updates the container image to the latest tag from ECR
+#   4. Registers the new task definition revision
+#   5. Updates the ECS service to use the new revision
+#   6. Waits for the deployment to stabilize (all tasks healthy)
+#
+# Branch → environment mapping:
+#   - test: csgtest-test (ECR, ECS cluster, ECS service)
+#   - prod: csgtest-prod
+#
+# Required GitHub Secrets:
+#   - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+# =============================================================================
+
+name: Deploy Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - test
+          - prod
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  deploy:
+    name: Deploy to ECS (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    # GitHub Environment gate — configure required reviewers in repo settings
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Fetch the most recently pushed image tag from ECR (excluding 'latest')
+      # This gives us the commit SHA tag for traceability
+      - name: Get latest image from ECR
+        id: ecr-image
+        run: |
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          ECR_REPO="csgtest-${{ inputs.environment }}"
+          FULL_REPO="${ECR_REGISTRY}/${ECR_REPO}"
+
+          # Get the most recent image, pick the full SHA tag (40 chars)
+          IMAGE_TAG=$(aws ecr describe-images \
+            --repository-name "${ECR_REPO}" \
+            --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageTags' \
+            --output json | jq -r '.[] | select(length == 40)' | head -1)
+
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "::error::No image found in ECR repository ${ECR_REPO}"
+            exit 1
+          fi
+
+          echo "image=${FULL_REPO}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "repo=${ECR_REPO}" >> "$GITHUB_OUTPUT"
+
+      # Download the current task definition and strip fields that can't be
+      # included when registering a new revision
+      - name: Get current task definition
+        id: task-def
+        run: |
+          FAMILY="csgtest-${{ inputs.environment }}"
+
+          aws ecs describe-task-definition \
+            --task-definition "${FAMILY}" \
+            --query 'taskDefinition' \
+            --output json \
+            | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            > task-definition.json
+
+          echo "family=${FAMILY}" >> "$GITHUB_OUTPUT"
+
+      # Update the container image in the task definition to the latest ECR tag
+      - name: Update image in task definition
+        run: |
+          CONTAINER_NAME="csgtest-app"
+          NEW_IMAGE="${{ steps.ecr-image.outputs.image }}"
+
+          jq --arg img "$NEW_IMAGE" --arg name "$CONTAINER_NAME" \
+            '(.containerDefinitions[] | select(.name == $name)).image = $img' \
+            task-definition.json > task-definition-updated.json
+
+          mv task-definition-updated.json task-definition.json
+
+      # Register the updated task definition as a new revision
+      - name: Register new task definition
+        id: register
+        run: |
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "task_definition_arn=${NEW_ARN}" >> "$GITHUB_OUTPUT"
+
+      # Update the ECS service to use the new task definition revision
+      # This triggers a rolling deployment
+      - name: Update ECS service
+        run: |
+          CLUSTER="csgtest-${{ inputs.environment }}"
+          SERVICE="csgtest-${{ inputs.environment }}"
+
+          aws ecs update-service \
+            --cluster "${CLUSTER}" \
+            --service "${SERVICE}" \
+            --task-definition "${{ steps.register.outputs.task_definition_arn }}" \
+            --force-new-deployment \
+            --query 'service.serviceName' \
+            --output text
+
+      # Wait until all new tasks are running and healthy (timeout ~10min)
+      - name: Wait for deployment to stabilize
+        run: |
+          CLUSTER="csgtest-${{ inputs.environment }}"
+          SERVICE="csgtest-${{ inputs.environment }}"
+
+          aws ecs wait services-stable \
+            --cluster "${CLUSTER}" \
+            --services "${SERVICE}"
+
+          echo "Deployment complete!"
+
+      # Write deployment summary to GitHub Actions job summary page
+      - name: Summary
+        run: |
+          echo "### Deployment Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ inputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image Tag | \`${{ steps.ecr-image.outputs.tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Task Definition | \`${{ steps.register.outputs.task_definition_arn }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${{ steps.ecr-image.outputs.image }}\` |" >> "$GITHUB_STEP_SUMMARY"

@@ -15,7 +15,7 @@
 ## 1. Repository Setup
 - [x] Initialize git repo
 - [x] Create repo on GitHub (account: arochaoscar)
-- [ ] Set up branching strategy: `main` (prod) and `develop` (test)
+- [x] Set up branching strategy: `main` (prod) and `develop` (test)
 
 ## 2. Terraform State Backend (Bootstrap)
 - [x] Create S3 bucket `csgtest-terraform-state` with versioning enabled

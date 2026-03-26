@@ -113,7 +113,19 @@ module "alb" {
   public_subnet_ids = module.vpc.public_subnet_ids
   security_group_id = module.vpc.alb_security_group_id
   app_port          = var.app_port
+  certificate_arn   = var.certificate_arn
   tags              = local.common_tags
+}
+
+# --- DNS ---
+
+module "dns" {
+  source = "../../modules/dns"
+
+  domain_name  = var.domain_name
+  subdomain    = "test"
+  alb_dns_name = module.alb.alb_dns_name
+  alb_zone_id  = module.alb.alb_zone_id
 }
 
 # --- ECS ---
@@ -139,7 +151,9 @@ module "ecs" {
 
   environment_variables = [
     { name = "NODE_ENV", value = "test" },
-    { name = "PORT", value = tostring(var.app_port) }
+    { name = "PORT", value = tostring(var.app_port) },
+    { name = "RECAPTCHA_SITE_KEY", value = var.recaptcha_site_key },
+    { name = "RECAPTCHA_SECRET_KEY", value = var.recaptcha_secret_key }
   ]
 
   secret_variables = [
