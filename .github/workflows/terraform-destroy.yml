@@ -1,3 +1,23 @@
+# =============================================================================
+# Terraform Destroy
+# =============================================================================
+# Manual workflow (workflow_dispatch) that tears down all infrastructure
+# for a given environment. Includes double confirmation safety:
+#
+#   1. User selects the environment (test or prod)
+#   2. User must type the environment name again to confirm
+#   3. The "validate" job checks the confirmation matches
+#   4. A destroy plan is generated and saved as an artifact
+#   5. The "destroy" job applies the plan behind a GitHub Environment gate
+#
+# This prevents accidental destruction — both the typed confirmation and
+# the environment approval gate must pass before any resources are deleted.
+#
+# Required GitHub Secrets:
+#   - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   - DB_PASSWORD_TEST, DB_PASSWORD_PROD
+# =============================================================================
+
 name: Terraform Destroy
 
 on:
@@ -18,12 +38,19 @@ on:
 permissions:
   contents: read
 
+# AWS credentials shared across all jobs
 env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Step 1: Validate Confirmation
+  # Ensures the user typed the correct environment name as confirmation.
+  # Fails fast if the confirmation string doesn't match, preventing
+  # accidental destruction of the wrong environment.
+  # ---------------------------------------------------------------------------
   validate:
     name: Validate Confirmation
     runs-on: ubuntu-latest
@@ -36,6 +63,11 @@ jobs:
           fi
           echo "Confirmation matched. Proceeding with destroy of '${{ inputs.environment }}'."
 
+  # ---------------------------------------------------------------------------
+  # Step 2: Plan Destroy
+  # Generates a destroy plan (-destroy flag) so the exact set of resources
+  # to be deleted is known and saved before execution.
+  # ---------------------------------------------------------------------------
   plan-destroy:
     name: Terraform Plan Destroy (${{ inputs.environment }})
     runs-on: ubuntu-latest
@@ -53,6 +85,8 @@ jobs:
         working-directory: terraform/environments/${{ inputs.environment }}
         run: terraform init
 
+      # Generate a destroy-only plan; db_password is required by the
+      # config even for destroy since Terraform needs to read the full state
       - name: Terraform Plan Destroy
         working-directory: terraform/environments/${{ inputs.environment }}
         env:
@@ -66,10 +100,16 @@ jobs:
           name: tfplan-destroy-${{ inputs.environment }}
           path: terraform/environments/${{ inputs.environment }}/tfplan-destroy
 
+  # ---------------------------------------------------------------------------
+  # Step 3: Destroy
+  # Downloads and applies the destroy plan. Uses a GitHub Environment gate
+  # for an additional layer of manual approval before deletion.
+  # ---------------------------------------------------------------------------
   destroy:
     name: Terraform Destroy (${{ inputs.environment }})
     runs-on: ubuntu-latest
     needs: plan-destroy
+    # GitHub Environment gate — requires approval before destroying resources
     environment: ${{ inputs.environment }}
 
     steps:
@@ -91,6 +131,7 @@ jobs:
           name: tfplan-destroy-${{ inputs.environment }}
           path: terraform/environments/${{ inputs.environment }}
 
+      # Apply the saved destroy plan — removes all resources in the environment
       - name: Terraform Destroy
         working-directory: terraform/environments/${{ inputs.environment }}
         run: terraform apply -auto-approve tfplan-destroy

@@ -1,0 +1,194 @@
+# =============================================================================
+# App CI Pipeline
+# =============================================================================
+# Runs on every push/PR to develop and main when app code changes.
+#
+# Jobs:
+#   1. lint-and-test  — ESLint + Jest unit tests (37 tests)
+#   2. audit          — pnpm audit for known vulnerabilities in prod deps
+#   3. build-and-push — Docker build with layer caching, push to ECR
+#
+# Jobs 1 and 2 run in parallel. Job 3 only runs on push (not PRs) after
+# both pass. Branch mapping: develop → csgtest-test, main → csgtest-prod.
+# =============================================================================
+
+name: App CI
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ci.yml'
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ci.yml'
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+# ---------------------------------------------------------------------------
+# Job 1: Lint & Test
+# Runs ESLint (with Jest + Testing Library plugins) and Jest unit tests.
+# pnpm store is cached via setup-node to skip repeated installs.
+# ---------------------------------------------------------------------------
+jobs:
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # setup-node caches the pnpm store (~/.local/share/pnpm/store)
+      # based on the hash of pnpm-lock.yaml — skips downloads on cache hit
+      - name: Setup Node.js with pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run lint
+        run: pnpm lint
+
+      - name: Run tests
+        run: pnpm test
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Dependency Audit
+  # Checks production dependencies for known security vulnerabilities.
+  # Runs in parallel with lint-and-test to save time.
+  # ---------------------------------------------------------------------------
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js with pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Only audits production deps (--prod) to avoid noise from devDependencies
+      - name: Audit production dependencies
+        run: pnpm audit --prod
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Build & Push to ECR
+  # Builds the production Docker image and pushes to Amazon ECR.
+  # Only runs on push events (not PRs) after lint-and-test + audit pass.
+  #
+  # Caching strategy:
+  #   - Docker BuildKit layer cache stored in GitHub Actions cache
+  #   - Reuses unchanged layers (deps, prisma generate) across builds
+  #   - Typically cuts build time by 50-70% on subsequent runs
+  #
+  # Image tags: full SHA, short SHA (7 chars), latest
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: [lint-and-test, audit]
+    # Skip on PRs — only push images from merged code on develop/main
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Map branch to environment: main → prod, develop → test
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "environment=prod" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=test" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Build ECR repo URL and image tags from registry + environment
+      - name: Set image metadata
+        id: meta
+        run: |
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          ECR_REPO="${ECR_REGISTRY}/csgtest-${{ steps.env.outputs.environment }}"
+          IMAGE_TAG="${{ github.sha }}"
+          SHORT_SHA="${IMAGE_TAG:0:7}"
+          echo "ecr_repo=${ECR_REPO}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      # Set up Docker Buildx for advanced build features (cache export)
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build with GitHub Actions cache backend:
+      #   - cache-from: pulls cached layers from previous builds
+      #   - cache-to: stores new layers for future builds (mode=max saves all layers)
+      #   - push=true: pushes all tags to ECR in a single step
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.ecr_repo }}:${{ steps.meta.outputs.image_tag }}
+            ${{ steps.meta.outputs.ecr_repo }}:${{ steps.meta.outputs.short_sha }}
+            ${{ steps.meta.outputs.ecr_repo }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Write a summary table to the GitHub Actions job summary page
+      - name: Summary
+        run: |
+          echo "### Docker Image Pushed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | \`${{ steps.env.outputs.environment }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Repository | \`${{ steps.meta.outputs.ecr_repo }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag (full) | \`${{ steps.meta.outputs.image_tag }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag (short) | \`${{ steps.meta.outputs.short_sha }}\` |" >> "$GITHUB_STEP_SUMMARY"

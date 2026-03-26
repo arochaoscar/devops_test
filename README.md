@@ -27,16 +27,24 @@ All resources are tagged with `name:csgtest`.
 │   │   ├── app/
 │   │   │   ├── page.tsx           # Main page — "Hello, World!" + greeting form
 │   │   │   ├── layout.tsx         # Root layout
-│   │   │   └── api/greetings/
-│   │   │       └── route.ts       # GET/POST API — list & save greetings
+│   │   │   ├── actions.ts         # Server Actions — getGreetings / createGreeting
+│   │   │   └── __tests__/         # Unit tests for server actions
 │   │   ├── components/
-│   │   │   └── greeting-form.tsx  # Client component — form, reCAPTCHA, table
+│   │   │   ├── greeting-form.tsx  # Client component — form, reCAPTCHA, table
+│   │   │   └── __tests__/         # Unit tests for components
 │   │   └── lib/
-│   │       ├── db.ts              # PostgreSQL pool (parses Secrets Manager JSON)
-│   │       └── recaptcha.ts       # Server-side reCAPTCHA verification
+│   │       ├── db.ts              # Prisma client singleton
+│   │       ├── recaptcha.ts       # Server-side reCAPTCHA verification
+│   │       └── __tests__/         # Unit tests for lib utilities
+│   ├── prisma/                    # Prisma schema and migrations
+│   ├── jest.config.js             # Jest config (server + client projects)
+│   ├── eslint.config.mjs          # ESLint (Next.js + Jest + Testing Library)
 │   ├── Dockerfile                 # Multi-stage hardened build (non-root, dumb-init)
-│   └── .dockerignore
+│   └── Dockerfile.dev             # Development — hot-reload with volumes
 ├── docker-compose.yml             # Local dev: app + PostgreSQL
+├── setup.sh                       # One-command local setup (deps, lint, tests, containers)
+├── .husky/
+│   └── pre-push                   # Git hook: lint + tests before every push
 ├── terraform/
 │   ├── modules/                   # Reusable Terraform modules
 │   │   ├── vpc/                   # VPC, subnets, IGW, NAT, route tables, security groups
@@ -57,10 +65,20 @@ All resources are tagged with `name:csgtest`.
 
 ## Prerequisites
 
+- [Node.js 20+](https://nodejs.org/) and [pnpm](https://pnpm.io/)
 - [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) configured with valid credentials
 - [Terraform >= 1.0](https://developer.hashicorp.com/terraform/install)
 - [Docker](https://docs.docker.com/get-started/get-docker/)
 - [GitHub CLI (`gh`)](https://cli.github.com/)
+
+### Quick Start
+
+```bash
+# One-command setup: installs deps, runs lint + tests, starts containers
+./setup.sh
+
+# App available at http://localhost:3000
+```
 
 ### 0. AWS Service Account Setup
 
@@ -266,8 +284,8 @@ A Next.js app with a greeting form, Google reCAPTCHA v2, and a visitor log store
 - **"Hello, World!"** landing page
 - **Input** — "Leave your name to say Hello"
 - **Google reCAPTCHA v2** — prevents bot submissions
-- **Greetings table** — "All these people have said Hello" with name, date/time, and IP
-- **API** — `GET /api/greetings` (list) and `POST /api/greetings` (create)
+- **Greetings table** — "All these people have said Hello" with name, date/time, location, and IP
+- **Server Actions** — `getGreetings()` (list) and `createGreeting()` (create with validation, IP geolocation)
 
 #### How Secrets Flow
 
@@ -289,12 +307,41 @@ The production image includes:
 - **Standalone output** — minimal image, no `node_modules`
 - **Read-only filesystem** support (only `.next/cache` writable)
 
+#### Testing
+
+Unit tests use Jest with ts-jest, split into two projects (server in Node, client in jsdom):
+
+```bash
+cd app
+
+# Run all tests (37 tests across 3 suites)
+pnpm test
+
+# Watch mode
+pnpm test:watch
+
+# Run lint (ESLint with Jest + Testing Library plugins)
+pnpm lint
+```
+
+| Suite | Scope |
+|-------|-------|
+| `recaptcha.test.ts` | Bypass logic, success/failure responses |
+| `actions.test.ts` | Input validation, reCAPTCHA, IP extraction, local IP detection, geolocation |
+| `greeting-form.test.tsx` | Render, form submission, error handling, captcha gating, avatar rendering |
+
+#### Git Hooks (Husky)
+
+A `pre-push` hook runs `pnpm lint && pnpm test` before every push. If either fails, the push is blocked.
+
 #### Local Development
 
 ```bash
-# Start app + PostgreSQL
-docker compose up --build
+# One-command setup (recommended)
+./setup.sh
 
+# Or manually:
+docker compose up --build
 # Access at http://localhost:3000
 ```
 
@@ -302,10 +349,10 @@ The `docker-compose.yml` provides:
 
 | Service | Image | Port | Purpose |
 |---------|-------|------|---------|
-| `app` | Built from `./app` | 3000 | Next.js application |
+| `app` | Built from `./app` (Dockerfile.dev) | 3000 | Next.js dev server with hot-reload |
 | `db` | `postgres:15-alpine` | 5432 | PostgreSQL database |
 
-Environment variables (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `DATABASE_URL`) are passed as runtime env vars — the Docker image contains no secrets.
+Prisma migrations run automatically on container startup. Environment variables (`RECAPTCHA_SITE_KEY`, `RECAPTCHA_SECRET_KEY`, `DATABASE_URL`) are passed as runtime env vars — the Docker image contains no secrets.
 
 ## Environments
 
@@ -327,7 +374,19 @@ terraform apply -var="db_password=YOUR_DB_PASSWORD"
 
 ### CI/CD (GitHub Actions)
 
-Two workflows handle infrastructure deployment with a **plan-auto / apply-manual** strategy:
+#### `app-ci.yml` — Automatic
+
+Triggers on push/PR to `develop` or `main` when `app/` files change. Runs three jobs:
+
+| Job | Runs | Description |
+|-----|------|-------------|
+| **lint-and-test** | Always | ESLint + Jest (37 unit tests) |
+| **audit** | Always | `pnpm audit --prod` — checks for known vulnerabilities |
+| **build-and-push** | Push only (not PRs) | Docker build with layer caching, push to ECR |
+
+Branch mapping: `develop` → `csgtest-test`, `main` → `csgtest-prod`. Images are tagged with full SHA, short SHA, and `latest`. Docker layer caching via GitHub Actions cache (BuildKit) reduces build time by ~50-70% on subsequent runs.
+
+Two additional workflows handle infrastructure deployment with a **plan-auto / apply-manual** strategy:
 
 #### `terraform-plan.yml` — Automatic
 
@@ -385,10 +444,11 @@ Triggered manually from **Actions → Terraform Destroy → Run workflow** in th
 
 ```
 .github/workflows/
+├── app-ci.yml              # Auto: lint, test, audit, Docker build & push to ECR
+├── app-deploy.yml          # Manual: build Docker image, push to ECR, deploy to ECS
 ├── terraform-plan.yml      # Auto: plan on push/PR
 ├── terraform-apply.yml     # Manual: apply via workflow_dispatch
-├── terraform-destroy.yml   # Manual: destroy via workflow_dispatch
-└── app-deploy.yml          # Manual: build Docker image, push to ECR, deploy to ECS
+└── terraform-destroy.yml   # Manual: destroy via workflow_dispatch
 ```
 
 ### Required GitHub Secrets

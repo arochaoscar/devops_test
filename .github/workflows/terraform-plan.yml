@@ -1,3 +1,21 @@
+# =============================================================================
+# Terraform Plan
+# =============================================================================
+# Runs terraform plan on every push/PR that touches terraform/ files.
+#
+# Uses a matrix strategy to plan both environments (test + prod) in parallel,
+# but skips the environment that doesn't match the current branch:
+#   - develop branch → plans only "test"
+#   - main branch    → plans only "prod"
+#
+# On pull requests, posts the plan output as a PR comment for review.
+# Plan artifacts are uploaded for use by the terraform-apply workflow.
+#
+# Required GitHub Secrets:
+#   - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   - DB_PASSWORD_TEST, DB_PASSWORD_PROD
+# =============================================================================
+
 name: Terraform Plan
 
 on:
@@ -16,8 +34,10 @@ on:
 
 permissions:
   contents: read
+  # Needed to post plan output as PR comments
   pull-requests: write
 
+# AWS credentials shared across all jobs via environment variables
 env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -28,6 +48,8 @@ jobs:
     name: Terraform Plan (${{ matrix.environment }})
     runs-on: ubuntu-latest
 
+    # Matrix runs test and prod in parallel; the skip step below filters
+    # so only the matching branch-environment pair actually executes
     strategy:
       fail-fast: false
       matrix:
@@ -39,12 +61,14 @@ jobs:
             branch: main
             db_password_secret: DB_PASSWORD_PROD
 
-    # Only run for the matching branch-environment pair
+    # Guard: only run when triggered from develop or main
     if: >-
       (github.ref == 'refs/heads/develop' || github.base_ref == 'develop') ||
       (github.ref == 'refs/heads/main' || github.base_ref == 'main')
 
     steps:
+      # Compare the trigger branch against the matrix branch to decide
+      # whether this matrix entry should run or be skipped entirely
       - name: Skip if branch does not match environment
         id: check
         run: |
@@ -65,16 +89,20 @@ jobs:
         with:
           terraform_version: "1.5.7"
 
+      # Initialize Terraform with the remote S3 backend for the target environment
       - name: Terraform Init
         if: steps.check.outputs.skip == 'false'
         working-directory: terraform/environments/${{ matrix.environment }}
         run: terraform init
 
+      # Validate syntax and configuration before planning
       - name: Terraform Validate
         if: steps.check.outputs.skip == 'false'
         working-directory: terraform/environments/${{ matrix.environment }}
         run: terraform validate
 
+      # Generate the execution plan; db_password is injected from the
+      # environment-specific secret via the matrix config
       - name: Terraform Plan
         if: steps.check.outputs.skip == 'false'
         working-directory: terraform/environments/${{ matrix.environment }}
@@ -83,6 +111,8 @@ jobs:
         run: |
           terraform plan -out=tfplan -no-color 2>&1 | tee plan_output.txt
 
+      # Save the binary plan file so terraform-apply can use it later
+      # without re-planning (ensures exact same changes are applied)
       - name: Upload Plan Artifact
         if: steps.check.outputs.skip == 'false'
         uses: actions/upload-artifact@v4
@@ -91,6 +121,8 @@ jobs:
           path: terraform/environments/${{ matrix.environment }}/tfplan
           retention-days: 5
 
+      # Post the human-readable plan as a collapsible PR comment
+      # so reviewers can see infrastructure changes before merging
       - name: Comment Plan on PR
         if: steps.check.outputs.skip == 'false' && github.event_name == 'pull_request'
         uses: actions/github-script@v7

@@ -174,6 +174,21 @@ pnpm lint
 
 A `pre-push` hook runs `pnpm lint && pnpm test` from the `app/` directory before every push. If either fails, the push is blocked.
 
+## CI/CD
+
+The `app-ci.yml` GitHub Actions workflow runs automatically on push/PR to `develop` or `main` when `app/` files change:
+
+| Job | Runs | Description |
+|-----|------|-------------|
+| **lint-and-test** | Always | ESLint + Jest (37 unit tests) with pnpm store cache |
+| **audit** | Always (parallel) | `pnpm audit --prod` — checks for known vulnerabilities in production deps |
+| **build-and-push** | Push only (not PRs) | Docker build with BuildKit layer caching, push to ECR |
+
+- Branch mapping: `develop` → `csgtest-test`, `main` → `csgtest-prod`
+- Image tags: full SHA, short SHA (7 chars), `latest`
+- Docker layer caching via GitHub Actions cache reduces build time by ~50-70% on subsequent runs
+- On PRs, only lint, tests, and audit run — no image is built or pushed
+
 ## Production Docker Image
 
 Multi-stage build with security hardening:

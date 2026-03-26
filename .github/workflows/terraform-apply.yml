@@ -1,3 +1,20 @@
+# =============================================================================
+# Terraform Apply
+# =============================================================================
+# Manual workflow (workflow_dispatch) that applies infrastructure changes.
+#
+# Two-phase approach for safety:
+#   1. plan  — generates a fresh plan and saves it as an artifact
+#   2. apply — downloads the exact plan artifact and applies it
+#
+# The "apply" job uses a GitHub Environment gate, so it can require
+# manual approval before executing (configure in repo Settings > Environments).
+#
+# Required GitHub Secrets:
+#   - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+#   - DB_PASSWORD_TEST, DB_PASSWORD_PROD
+# =============================================================================
+
 name: Terraform Apply
 
 on:
@@ -14,12 +31,18 @@ on:
 permissions:
   contents: read
 
+# AWS credentials shared across all jobs
 env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Phase 1: Plan
+  # Generates the execution plan and uploads the binary plan file.
+  # This ensures the apply step executes exactly what was reviewed.
+  # ---------------------------------------------------------------------------
   plan:
     name: Terraform Plan (${{ inputs.environment }})
     runs-on: ubuntu-latest
@@ -36,22 +59,30 @@ jobs:
         working-directory: terraform/environments/${{ inputs.environment }}
         run: terraform init
 
+      # Select the correct DB password secret based on the chosen environment
       - name: Terraform Plan
         working-directory: terraform/environments/${{ inputs.environment }}
         env:
           TF_VAR_db_password: ${{ inputs.environment == 'prod' && secrets.DB_PASSWORD_PROD || secrets.DB_PASSWORD_TEST }}
         run: terraform plan -out=tfplan -no-color
 
+      # Upload binary plan so the apply job uses the exact same changes
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-${{ inputs.environment }}
           path: terraform/environments/${{ inputs.environment }}/tfplan
 
+  # ---------------------------------------------------------------------------
+  # Phase 2: Apply
+  # Downloads the plan artifact and applies it. Uses a GitHub Environment
+  # gate for optional manual approval before execution.
+  # ---------------------------------------------------------------------------
   apply:
     name: Terraform Apply (${{ inputs.environment }})
     runs-on: ubuntu-latest
     needs: plan
+    # GitHub Environment gate — configure required reviewers in repo settings
     environment: ${{ inputs.environment }}
 
     steps:
@@ -67,12 +98,14 @@ jobs:
         working-directory: terraform/environments/${{ inputs.environment }}
         run: terraform init
 
+      # Download the exact plan generated in the plan job
       - name: Download Plan Artifact
         uses: actions/download-artifact@v4
         with:
           name: tfplan-${{ inputs.environment }}
           path: terraform/environments/${{ inputs.environment }}
 
+      # Apply the saved plan — no re-planning, no drift risk
       - name: Terraform Apply
         working-directory: terraform/environments/${{ inputs.environment }}
         run: terraform apply -auto-approve tfplan
