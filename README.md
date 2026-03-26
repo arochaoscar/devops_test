@@ -368,10 +368,10 @@ Prisma migrations run automatically on container startup. Environment variables 
 
 ## Environments
 
-| Environment | Branch    | Domain                    | Description            |
-| ----------- | --------- | ------------------------- | ---------------------- |
-| Test        | `develop` | `test.arochaoscar.online` | Testing environment    |
-| Production  | `main`    | `arochaoscar.online`      | Production environment |
+| Environment | Branch    | URL                                  | Description            |
+| ----------- | --------- | ------------------------------------ | ---------------------- |
+| Test        | `develop` | https://test.arochaoscar.online      | Testing environment    |
+| Production  | `main`    | https://arochaoscar.online           | Production environment |
 
 ## Deployment
 

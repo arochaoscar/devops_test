@@ -1,6 +1,16 @@
+/**
+ * Tests for server-side reCAPTCHA verification.
+ *
+ * Covers:
+ *   - Bypass when RECAPTCHA_SECRET_KEY is not configured
+ *   - Success response from Google API
+ *   - Failure response from Google API
+ *   - Missing "success" field in response
+ */
+
 import { verifyRecaptcha } from "../recaptcha";
 
-// Mock global fetch
+// Mock global fetch to intercept calls to Google's reCAPTCHA API
 const mockFetch = jest.fn();
 global.fetch = mockFetch;
 

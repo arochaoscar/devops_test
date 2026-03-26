@@ -1,3 +1,11 @@
+/**
+ * Root Layout
+ *
+ * Configures global fonts (DM Sans for body, Geist Mono for code/IPs),
+ * HTML metadata, and the base document structure. All pages inherit
+ * this layout — it wraps the entire application.
+ */
+
 import type { Metadata } from "next";
 import { Geist_Mono, DM_Sans } from "next/font/google";
 import "./globals.css";

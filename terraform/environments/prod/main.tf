@@ -1,3 +1,19 @@
+# =============================================================================
+# Production Environment Configuration
+# =============================================================================
+# Deploys all infrastructure for the production environment (branch: main).
+# URL: https://arochaoscar.online
+#
+# Differences from test:
+#   - VPC CIDR: 10.1.0.0/16 (test uses 10.0.0.0/16)
+#   - RDS: multi-AZ for high availability, final snapshot on deletion
+#   - ECS: 2 desired tasks for redundancy
+#   - NODE_ENV: "production"
+#
+# State is stored in S3 under key "prod/terraform.tfstate", isolated
+# from the test state file in the same bucket.
+# =============================================================================
+
 terraform {
   required_version = ">= 1.0"
 
@@ -8,6 +24,7 @@ terraform {
     }
   }
 
+  # Remote state — S3 with DynamoDB locking
   backend "s3" {
     bucket         = "csgtest-terraform-state"
     key            = "prod/terraform.tfstate"
@@ -20,6 +37,7 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
+  # Applied to every resource — ensures compliance with name:csgtest tagging
   default_tags {
     tags = {
       name = "csgtest"
@@ -59,6 +77,8 @@ module "ecr" {
 }
 
 # --- RDS ---
+# multi_az = true for automatic failover; skip_final_snapshot = false
+# ensures a snapshot is taken before any terraform destroy
 
 module "rds" {
   source = "../../modules/rds"
@@ -77,6 +97,7 @@ module "rds" {
 }
 
 # --- Secrets Manager ---
+# Builds DATABASE_URL from RDS outputs and stores it for ECS injection
 
 module "secrets" {
   source = "../../modules/secrets"
@@ -129,6 +150,7 @@ module "alb" {
 }
 
 # --- DNS ---
+# subdomain = "" → root domain (arochaoscar.online) points to ALB
 
 module "dns" {
   source = "../../modules/dns"

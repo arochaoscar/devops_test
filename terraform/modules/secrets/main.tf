@@ -1,3 +1,19 @@
+# =============================================================================
+# Secrets Module
+# =============================================================================
+# Stores database credentials in AWS Secrets Manager as a PostgreSQL
+# connection string (DATABASE_URL format).
+#
+# The secret is referenced by the ECS task definition as a "secret" env var.
+# At container startup, the ECS agent fetches the value from Secrets Manager
+# and injects it as the DATABASE_URL environment variable.
+#
+# Connection string format:
+#   postgresql://username:password@host:port/dbname
+#
+# This avoids JSON parsing at runtime — Prisma reads DATABASE_URL directly.
+# =============================================================================
+
 resource "aws_secretsmanager_secret" "db_credentials" {
   name        = "${var.project}/${var.environment}/db-credentials"
   description = "Database credentials for ${var.project} ${var.environment}"

@@ -1,3 +1,21 @@
+/**
+ * Tests for Server Actions (getGreetings, createGreeting).
+ *
+ * All external dependencies are mocked:
+ *   - Prisma client (db reads/writes)
+ *   - reCAPTCHA verification
+ *   - Next.js headers (x-forwarded-for)
+ *   - Global fetch (ip-api.com geolocation)
+ *
+ * Test categories:
+ *   - Input validation (empty, whitespace, too long, max length)
+ *   - reCAPTCHA failure
+ *   - IP extraction from x-forwarded-for header
+ *   - Local/private IP detection (127.0.0.1, 10.x, 172.x, 192.168.x, ::1)
+ *   - Geolocation success, failure, empty response, non-ok response
+ *   - Successful creation and name trimming
+ */
+
 import { getGreetings, createGreeting } from "../actions";
 
 // --- Mocks ---

@@ -1,6 +1,16 @@
+/**
+ * Home Page — Server Component
+ *
+ * Renders the "Hello, World!" landing page with the greeting form.
+ * The reCAPTCHA site key is read server-side from the environment and
+ * passed as a prop to the client component — this avoids using
+ * NEXT_PUBLIC_ variables, so no secrets are baked into the JS bundle.
+ */
+
 import GreetingForm from "@/components/greeting-form";
 
 export default function Home() {
+  // Read server-side env var — never exposed in client bundle
   const recaptchaSiteKey = process.env.RECAPTCHA_SITE_KEY || "";
 
   return (

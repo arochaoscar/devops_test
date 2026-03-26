@@ -1,3 +1,19 @@
+# =============================================================================
+# Test Environment Configuration
+# =============================================================================
+# Deploys all infrastructure for the test environment (branch: develop).
+# URL: https://test.arochaoscar.online
+#
+# Differences from prod:
+#   - VPC CIDR: 10.0.0.0/16 (prod uses 10.1.0.0/16)
+#   - RDS: single-AZ, skip final snapshot
+#   - ECS: 1 desired task (prod: 2)
+#   - NODE_ENV: "test"
+#
+# State is stored in S3 under key "test/terraform.tfstate", isolated
+# from the prod state file in the same bucket.
+# =============================================================================
+
 terraform {
   required_version = ">= 1.0"
 
@@ -8,6 +24,7 @@ terraform {
     }
   }
 
+  # Remote state — S3 with DynamoDB locking
   backend "s3" {
     bucket         = "csgtest-terraform-state"
     key            = "test/terraform.tfstate"
@@ -20,6 +37,7 @@ terraform {
 provider "aws" {
   region = var.aws_region
 
+  # Applied to every resource — ensures compliance with name:csgtest tagging
   default_tags {
     tags = {
       name = "csgtest"
@@ -59,6 +77,7 @@ module "ecr" {
 }
 
 # --- RDS ---
+# multi_az = false for cost savings; skip_final_snapshot = true for fast teardown
 
 module "rds" {
   source = "../../modules/rds"
@@ -77,6 +96,7 @@ module "rds" {
 }
 
 # --- Secrets Manager ---
+# Builds DATABASE_URL from RDS outputs and stores it for ECS injection
 
 module "secrets" {
   source = "../../modules/secrets"
@@ -129,6 +149,7 @@ module "alb" {
 }
 
 # --- DNS ---
+# subdomain = "test" → test.arochaoscar.online points to ALB
 
 module "dns" {
   source = "../../modules/dns"

@@ -1,7 +1,25 @@
+# =============================================================================
+# VPC Module
+# =============================================================================
+# Creates the network foundation: VPC, public/private subnets across multiple
+# AZs, internet gateway, NAT gateway, route tables, and security groups.
+#
+# Network layout (using default /16 CIDR):
+#   - Public subnets:  /24 blocks (e.g., 10.0.0.0/24, 10.0.1.0/24) — ALB
+#   - Private subnets: /24 blocks (e.g., 10.0.2.0/24, 10.0.3.0/24) — ECS, RDS
+#
+# Traffic flow:
+#   Internet → IGW → Public subnets (ALB)
+#   Private subnets → NAT Gateway → Internet (outbound only)
+# =============================================================================
+
+# Fetch available AZs in the current region to distribute subnets
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
+# Main VPC with DNS support enabled (required for ECS service discovery
+# and RDS endpoint resolution within the VPC)
 resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
@@ -11,6 +29,8 @@ resource "aws_vpc" "this" {
 }
 
 # --- Public Subnets ---
+# Host the ALB. Each subnet is placed in a different AZ for high availability.
+# cidrsubnet(base, newbits, netnum) carves /24 blocks from the /16 VPC CIDR.
 
 resource "aws_subnet" "public" {
   count                   = var.az_count
@@ -23,6 +43,8 @@ resource "aws_subnet" "public" {
 }
 
 # --- Private Subnets ---
+# Host ECS tasks and RDS. No public IPs — outbound internet via NAT Gateway.
+# Offset by az_count to avoid CIDR overlap with public subnets.
 
 resource "aws_subnet" "private" {
   count             = var.az_count
@@ -34,6 +56,7 @@ resource "aws_subnet" "private" {
 }
 
 # --- Internet Gateway ---
+# Provides internet access for resources in public subnets (ALB)
 
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
@@ -42,6 +65,9 @@ resource "aws_internet_gateway" "this" {
 }
 
 # --- NAT Gateway (single, cost-conscious) ---
+# Allows private subnet resources (ECS tasks) to reach the internet
+# for pulling images, Prisma migrations, and geolocation API calls.
+# A single NAT in one AZ keeps costs low — acceptable for this workload.
 
 resource "aws_eip" "nat" {
   domain = "vpc"
@@ -59,6 +85,8 @@ resource "aws_nat_gateway" "this" {
 }
 
 # --- Route Tables ---
+# Public route table: all traffic → Internet Gateway
+# Private route table: all traffic → NAT Gateway (outbound only)
 
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.this.id
@@ -95,6 +123,15 @@ resource "aws_route_table_association" "private" {
 }
 
 # --- Security Groups ---
+# Three-tier security model:
+#   ALB SG → accepts HTTP/HTTPS from the internet
+#   ECS SG → accepts traffic only from ALB on the app port
+#   RDS SG → accepts PostgreSQL connections only from ECS tasks
+#
+# revoke_rules_on_delete: removes all rules before deletion to avoid
+# DependencyViolation errors when Terraform replaces the security group.
+# create_before_destroy: ensures the new SG exists before the old one
+# is removed, preventing downtime during replacements.
 
 resource "aws_security_group" "alb" {
   name_prefix = "${var.project}-alb-"
@@ -107,6 +144,7 @@ resource "aws_security_group" "alb" {
     create_before_destroy = true
   }
 
+  # HTTP — ALB redirects all HTTP traffic to HTTPS (301)
   ingress {
     description = "HTTP from anywhere (redirects to HTTPS)"
     from_port   = 80
@@ -115,6 +153,7 @@ resource "aws_security_group" "alb" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # HTTPS — TLS termination at the ALB using ACM certificate
   ingress {
     description = "HTTPS from anywhere"
     from_port   = 443
@@ -144,6 +183,7 @@ resource "aws_security_group" "ecs" {
     create_before_destroy = true
   }
 
+  # Only the ALB can reach ECS tasks — no direct internet access
   ingress {
     description     = "From ALB"
     from_port       = var.app_port
@@ -173,6 +213,7 @@ resource "aws_security_group" "rds" {
     create_before_destroy = true
   }
 
+  # Only ECS tasks can connect to the database
   ingress {
     description     = "PostgreSQL from ECS"
     from_port       = 5432
