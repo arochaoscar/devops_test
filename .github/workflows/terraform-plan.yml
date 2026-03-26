@@ -1,0 +1,108 @@
+name: Terraform Plan
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'terraform/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'terraform/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+
+jobs:
+  plan:
+    name: Terraform Plan (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: test
+            branch: develop
+            db_password_secret: DB_PASSWORD_TEST
+          - environment: prod
+            branch: main
+            db_password_secret: DB_PASSWORD_PROD
+
+    # Only run for the matching branch-environment pair
+    if: >-
+      (github.ref == 'refs/heads/develop' || github.base_ref == 'develop') ||
+      (github.ref == 'refs/heads/main' || github.base_ref == 'main')
+
+    steps:
+      - name: Skip if branch does not match environment
+        id: check
+        run: |
+          REF="${{ github.base_ref || github.ref_name }}"
+          if [[ "${{ matrix.branch }}" != "$REF" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        if: steps.check.outputs.skip == 'false'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: Terraform Init
+        if: steps.check.outputs.skip == 'false'
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: terraform init
+
+      - name: Terraform Validate
+        if: steps.check.outputs.skip == 'false'
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: terraform validate
+
+      - name: Terraform Plan
+        if: steps.check.outputs.skip == 'false'
+        working-directory: terraform/environments/${{ matrix.environment }}
+        env:
+          TF_VAR_db_password: ${{ secrets[matrix.db_password_secret] }}
+        run: |
+          terraform plan -out=tfplan -no-color 2>&1 | tee plan_output.txt
+
+      - name: Upload Plan Artifact
+        if: steps.check.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: terraform/environments/${{ matrix.environment }}/tfplan
+          retention-days: 5
+
+      - name: Comment Plan on PR
+        if: steps.check.outputs.skip == 'false' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/environments/${{ matrix.environment }}/plan_output.txt', 'utf8');
+            const truncated = plan.length > 60000 ? plan.substring(0, 60000) + '\n... (truncated)' : plan;
+            const body = `### Terraform Plan — \`${{ matrix.environment }}\`\n\n<details><summary>Show plan</summary>\n\n\`\`\`\n${truncated}\n\`\`\`\n\n</details>`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

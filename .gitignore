@@ -1,0 +1,25 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+.terraform.lock.hcl
+
+# AWS
+iam-policy.json
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Environment
+.env
+
+# Claude Code / AI tooling
+.claude/
+.agents/
+skills-lock.json
+CLAUDE.md
