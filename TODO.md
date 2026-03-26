@@ -37,27 +37,36 @@
 - [x] ECS Cluster + Task Definition with environment variables per environment (test/prod)
 - [x] RDS instance
 - [x] Secrets management (AWS Secrets Manager)
-- [x] Application Load Balancer (ALB)
+- [x] Application Load Balancer (ALB) with HTTPS listener and HTTP→HTTPS redirect
 - [x] ECR repository for container image management
+- [x] ACM certificate with wildcard SAN and DNS validation via Route 53
+- [x] Route 53 DNS records (A alias to ALB) — `test.arochaoscar.online` and `arochaoscar.online`
+- [x] Route 53 zone ID passed as variable from GitHub Secret `ROUTE53_ZONE_ID`
 - [x] Tag all resources with `name:csgtest`
 
 ## 5. Application
-- [ ] Simple "Hello, World!" web app
-- [ ] Dockerfile
-- [ ] Build and push image to ECR
+- [x] Simple "Hello, World!" web app (Next.js with greeting form, reCAPTCHA, visitor log)
+- [x] Dockerfile (multi-stage, hardened, non-root, dumb-init)
+- [x] Build and push image to ECR
+- [x] Unit tests (37 tests across 3 suites — Jest with ts-jest)
+- [x] ESLint with Jest + Testing Library plugins
 
 ## 6. CI/CD Pipeline (GitHub Actions)
-- [ ] Pipeline: `main` branch → deploy to production environment
-- [ ] Pipeline: `develop` branch → deploy to testing environment
-- [ ] Build & push Docker image step
-- [ ] Terraform plan/apply step
+- [x] Pipeline: `main` branch → deploy to production environment
+- [x] Pipeline: `develop` branch → deploy to testing environment
+- [x] Build & push Docker image step (`app-ci.yml` — lint, test, audit, Docker build)
+- [x] Terraform plan/apply step (`terraform-plan.yml` auto, `terraform-apply.yml` manual)
+- [x] Terraform destroy workflow with double confirmation (`terraform-destroy.yml`)
+- [x] App deploy workflow — ECS task definition update (`app-deploy.yml`)
+- [x] GitHub Environment protection rules with required reviewers
 
 ## 7. Documentation
-- [ ] README.md with project description and usage instructions
+- [x] README.md with project description and usage instructions
 - [ ] Infrastructure diagram (draw.io)
-- [ ] CLAUDE.md for repo guidance
+- [x] CLAUDE.md for repo guidance
 
 ## 8. Pre-Interview
 - [ ] Test all infrastructure end-to-end
-- [ ] Verify both environments (test and prod) work
+- [ ] Verify test environment works (`test.arochaoscar.online`)
+- [ ] Verify prod environment works (`arochaoscar.online`)
 - [ ] Ensure all documentation is in English
