@@ -49,10 +49,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # pnpm version is read automatically from packageManager in package.json
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       # setup-node caches the pnpm store (~/.local/share/pnpm/store)
       # based on the hash of pnpm-lock.yaml — skips downloads on cache hit
@@ -87,10 +86,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # pnpm version is read automatically from packageManager in package.json
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - name: Setup Node.js with pnpm cache
         uses: actions/setup-node@v4
