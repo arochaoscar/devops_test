@@ -3,6 +3,11 @@ variable "domain_name" {
   type        = string
 }
 
+variable "zone_id" {
+  description = "Route 53 hosted zone ID"
+  type        = string
+}
+
 variable "subdomain" {
   description = "Subdomain prefix (e.g., 'test' for test.arochaoscar.online). Empty string for root domain."
   type        = string

@@ -102,6 +102,17 @@ module "iam" {
   tags         = local.common_tags
 }
 
+# --- ACM ---
+
+module "acm" {
+  source = "../../modules/acm"
+
+  project     = local.project
+  domain_name = var.domain_name
+  zone_id     = var.route53_zone_id
+  tags        = local.common_tags
+}
+
 # --- ALB ---
 
 module "alb" {
@@ -113,7 +124,7 @@ module "alb" {
   public_subnet_ids = module.vpc.public_subnet_ids
   security_group_id = module.vpc.alb_security_group_id
   app_port          = var.app_port
-  certificate_arn   = var.certificate_arn
+  certificate_arn   = module.acm.certificate_arn
   tags              = local.common_tags
 }
 
@@ -124,6 +135,7 @@ module "dns" {
 
   domain_name  = var.domain_name
   subdomain    = ""
+  zone_id      = var.route53_zone_id
   alb_dns_name = module.alb.alb_dns_name
   alb_zone_id  = module.alb.alb_zone_id
 }
