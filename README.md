@@ -10,7 +10,9 @@ A reusable Terraform setup that deploys a containerized Next.js web application 
 
 - **Next.js Application** - "Hello, World!" app with greeting form, Google reCAPTCHA, and visitor log
 - **ECS Fargate Cluster** - Runs the containerized application
-- **Application Load Balancer** - Routes traffic to ECS tasks
+- **Application Load Balancer** - Routes HTTPS traffic to ECS tasks (HTTP redirects to HTTPS)
+- **ACM Certificate** - TLS certificate with DNS validation via Route 53 (wildcard `*.arochaoscar.online`)
+- **Route 53** - DNS records pointing to ALB (`arochaoscar.online` for prod, `test.arochaoscar.online` for test)
 - **RDS (PostgreSQL)** - Stores greeting records (name, timestamp, IP)
 - **ECR** - Docker image registry
 - **AWS Secrets Manager** - Database credentials
@@ -50,7 +52,9 @@ All resources are tagged with `name:csgtest`.
 │   │   ├── vpc/                   # VPC, subnets, IGW, NAT, route tables, security groups
 │   │   ├── iam/                   # ECS execution role, task role, secrets access policy
 │   │   ├── ecr/                   # Container registry with lifecycle policy
-│   │   ├── alb/                   # Application Load Balancer, target group, listener
+│   │   ├── acm/                   # ACM certificate with DNS validation via Route 53
+│   │   ├── alb/                   # Application Load Balancer, target group, HTTPS/HTTP listeners
+│   │   ├── dns/                   # Route 53 A record (alias to ALB)
 │   │   ├── ecs/                   # Fargate cluster, task definition, service, CloudWatch logs
 │   │   ├── rds/                   # PostgreSQL instance, DB subnet group
 │   │   └── secrets/               # Secrets Manager (DB credentials)
@@ -134,6 +138,11 @@ gh secret set AWS_REGION --repo arochaoscar/devops_test --body "us-east-1"
 # Set Terraform state backend secrets
 gh secret set TF_STATE_BUCKET --repo arochaoscar/devops_test --body "csgtest-terraform-state"
 gh secret set TF_STATE_LOCK_TABLE --repo arochaoscar/devops_test --body "csgtest-terraform-lock"
+
+# Set Route 53 hosted zone ID
+aws route53 list-hosted-zones-by-name --dns-name arochaoscar.online \
+  --query 'HostedZones[0].Id' --output text | sed 's|/hostedzone/||' | \
+  gh secret set ROUTE53_ZONE_ID --repo arochaoscar/devops_test
 
 # Set reCAPTCHA keys
 gh secret set RECAPTCHA_SITE_KEY --repo arochaoscar/devops_test --body "<SITE_KEY>"
@@ -231,7 +240,9 @@ All infrastructure is defined as reusable Terraform modules consumed by per-envi
 | **vpc**     | VPC, 2 public + 2 private subnets, Internet Gateway, NAT Gateway, route tables, security groups (ALB, ECS, RDS) |
 | **iam**     | ECS task execution role (with Secrets Manager access), ECS task role                                            |
 | **ecr**     | ECR repository with scan-on-push and lifecycle policy (keeps last 10 images)                                    |
-| **alb**     | Application Load Balancer, target group (IP-based), HTTP listener                                               |
+| **acm**     | ACM certificate with wildcard SAN, DNS validation records, certificate validation waiter                        |
+| **alb**     | Application Load Balancer, target group (IP-based), HTTPS listener (TLS termination), HTTP→HTTPS redirect       |
+| **dns**     | Route 53 A record (alias to ALB) for root or subdomain                                                         |
 | **ecs**     | ECS Fargate cluster, task definition, service, CloudWatch log group                                             |
 | **rds**     | PostgreSQL instance (encrypted), DB subnet group                                                                |
 | **secrets** | Secrets Manager secret with DB credentials (username, password, host, port, dbname)                             |
@@ -246,12 +257,13 @@ All infrastructure is defined as reusable Terraform modules consumed by per-envi
 | ECS desired count   | 1                        | 2                        |
 | Skip final snapshot | Yes                      | No                       |
 | `NODE_ENV`          | `test`                   | `production`             |
+| Domain              | `test.arochaoscar.online`| `arochaoscar.online`     |
 
 #### Networking & Security
 
 - **Public subnets** — ALB (internet-facing)
 - **Private subnets** — ECS tasks and RDS (no direct internet access, outbound via NAT)
-- **ALB SG** — allows inbound HTTP (port 80) from `0.0.0.0/0`
+- **ALB SG** — allows inbound HTTP (port 80) and HTTPS (port 443) from `0.0.0.0/0`
 - **ECS SG** — allows inbound only from ALB on the app port (3000)
 - **RDS SG** — allows inbound PostgreSQL (5432) only from ECS tasks
 
@@ -264,16 +276,16 @@ cd terraform/environments/test   # or prod
 terraform init
 
 # Preview changes
-terraform plan -var="db_password=YOUR_DB_PASSWORD"
+terraform plan -var="db_password=YOUR_DB_PASSWORD" -var="route53_zone_id=YOUR_ZONE_ID"
 
 # Apply infrastructure
-terraform apply -var="db_password=YOUR_DB_PASSWORD"
+terraform apply -var="db_password=YOUR_DB_PASSWORD" -var="route53_zone_id=YOUR_ZONE_ID"
 
 # Destroy (when needed)
-terraform destroy -var="db_password=YOUR_DB_PASSWORD"
+terraform destroy -var="db_password=YOUR_DB_PASSWORD" -var="route53_zone_id=YOUR_ZONE_ID"
 ```
 
-> **Note:** `db_password` is the only required variable without a default. In CI/CD, it is passed via GitHub Secrets.
+> **Note:** `db_password` and `route53_zone_id` are the required variables without defaults. In CI/CD, they are passed via GitHub Secrets.
 
 ### 5. Application
 
@@ -356,10 +368,10 @@ Prisma migrations run automatically on container startup. Environment variables 
 
 ## Environments
 
-| Environment | Branch    | Description            |
-| ----------- | --------- | ---------------------- |
-| Test        | `develop` | Testing environment    |
-| Production  | `main`    | Production environment |
+| Environment | Branch    | Domain                    | Description            |
+| ----------- | --------- | ------------------------- | ---------------------- |
+| Test        | `develop` | `test.arochaoscar.online` | Testing environment    |
+| Production  | `main`    | `arochaoscar.online`      | Production environment |
 
 ## Deployment
 
@@ -368,8 +380,8 @@ Prisma migrations run automatically on container startup. Environment variables 
 ```bash
 cd terraform/environments/test   # or prod
 terraform init
-terraform plan -var="db_password=YOUR_DB_PASSWORD"
-terraform apply -var="db_password=YOUR_DB_PASSWORD"
+terraform plan -var="db_password=YOUR_DB_PASSWORD" -var="route53_zone_id=YOUR_ZONE_ID"
+terraform apply -var="db_password=YOUR_DB_PASSWORD" -var="route53_zone_id=YOUR_ZONE_ID"
 ```
 
 ### CI/CD (GitHub Actions)
@@ -462,6 +474,7 @@ Triggered manually from **Actions → Terraform Destroy → Run workflow** in th
 | `TF_STATE_LOCK_TABLE`   | DynamoDB table for state locking  |
 | `DB_PASSWORD_TEST`      | RDS password for test environment |
 | `DB_PASSWORD_PROD`      | RDS password for prod environment |
+| `ROUTE53_ZONE_ID`       | Route 53 hosted zone ID for the domain |
 | `RECAPTCHA_SITE_KEY`    | Google reCAPTCHA v2 site key (public) |
 | `RECAPTCHA_SECRET_KEY`  | Google reCAPTCHA v2 secret key |
 

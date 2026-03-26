@@ -1,12 +1,6 @@
-# Look up the existing hosted zone by domain name
-data "aws_route53_zone" "this" {
-  name         = var.domain_name
-  private_zone = false
-}
-
-# A record — root domain pointing to ALB
+# A record — pointing to ALB
 resource "aws_route53_record" "root" {
-  zone_id = data.aws_route53_zone.this.zone_id
+  zone_id = var.zone_id
   name    = var.subdomain != "" ? "${var.subdomain}.${var.domain_name}" : var.domain_name
   type    = "A"
 

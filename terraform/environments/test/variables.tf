@@ -70,10 +70,9 @@ variable "domain_name" {
   default     = "arochaoscar.online"
 }
 
-variable "certificate_arn" {
-  description = "ACM certificate ARN for HTTPS"
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone ID for the domain"
   type        = string
-  default     = "arn:aws:acm:us-east-1:230289224568:certificate/b60495b0-3a32-4a48-a258-87dbd4918a88"
 }
 
 variable "recaptcha_site_key" {
