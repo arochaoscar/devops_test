@@ -298,14 +298,29 @@ Both environments are configured with protection rules:
 | `test`      | `arochaoscar`     | `develop`         |
 | `prod`      | `arochaoscar`     | `main`            |
 
-When the apply workflow runs, GitHub will pause at the `apply` job and show a **"Review deployments"** button. The required reviewer must approve before Terraform apply executes.
+When the apply or destroy workflow runs, GitHub will pause at the final job and show a **"Review deployments"** button. The required reviewer must approve before Terraform executes.
+
+#### `terraform-destroy.yml` — Manual
+
+Triggered manually from **Actions → Terraform Destroy → Run workflow** in the GitHub portal.
+
+| Step | Description |
+|------|-------------|
+| Select environment | Choose `test` or `prod` from the dropdown |
+| Confirm | Type the environment name to confirm (must match selection) |
+| Plan destroy | Runs `terraform plan -destroy` and saves as artifact |
+| **Approval** | Requires manual approval via GitHub Environment protection rules |
+| Destroy | Applies the destroy plan |
+
+> **Safety:** Requires double confirmation — typing the environment name AND reviewer approval.
 
 #### Workflow Files
 
 ```
 .github/workflows/
 ├── terraform-plan.yml      # Auto: plan on push/PR
-└── terraform-apply.yml     # Manual: apply via workflow_dispatch
+├── terraform-apply.yml     # Manual: apply via workflow_dispatch
+└── terraform-destroy.yml   # Manual: destroy via workflow_dispatch
 ```
 
 ### Required GitHub Secrets
