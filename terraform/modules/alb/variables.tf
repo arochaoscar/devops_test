@@ -35,6 +35,11 @@ variable "health_check_path" {
   default     = "/"
 }
 
+variable "certificate_arn" {
+  description = "ACM certificate ARN for HTTPS listener"
+  type        = string
+}
+
 variable "tags" {
   description = "Common tags for all resources"
   type        = map(string)
